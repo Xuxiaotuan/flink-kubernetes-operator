@@ -1,0 +1,29 @@
+# Licensed under the Apache License, Version 2.0.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: lineage-direct
+  namespace: flink-lineage-test
+spec:
+  backoffLimit: 0
+  activeDeadlineSeconds: 300
+  template:
+    spec:
+      restartPolicy: Never
+      securityContext:
+        runAsUser: 9999
+        runAsGroup: 9999
+        fsGroup: 9999
+      containers:
+        - name: sql-client
+          image: flink-lineage-local:f55bfca9ca7-754298264-jdk17
+          imagePullPolicy: Never
+          command: [bash, /opt/flink/bin/sql-client.sh, -f, /evidence/direct.sql]
+          resources:
+            requests: {cpu: 250m, memory: 1536Mi}
+            limits: {memory: 2Gi}
+          volumeMounts:
+            - {name: evidence, mountPath: /evidence}
+      volumes:
+        - name: evidence
+          persistentVolumeClaim: {claimName: lineage-evidence}

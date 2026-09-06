@@ -1,0 +1,92 @@
+# Licensed under the Apache License, Version 2.0.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: lineage-evidence
+  namespace: flink-lineage-test
+spec:
+  accessModes: [ReadWriteOnce]
+  storageClassName: local-path
+  resources:
+    requests:
+      storage: 2Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: lineage-collector
+  namespace: flink-lineage-test
+spec:
+  replicas: 1
+  selector:
+    matchLabels: {app: lineage-collector}
+  template:
+    metadata:
+      labels: {app: lineage-collector}
+    spec:
+      securityContext:
+        runAsUser: 9999
+        runAsGroup: 9999
+        fsGroup: 9999
+      containers:
+        - name: collector
+          image: node:22-alpine
+          command: [node, /scripts/collector.cjs]
+          resources:
+            requests: {cpu: 50m, memory: 64Mi}
+            limits: {memory: 256Mi}
+          ports: [{containerPort: 8080}]
+          readinessProbe:
+            httpGet: {path: /healthz, port: 8080}
+          volumeMounts:
+            - {name: evidence, mountPath: /evidence}
+            - {name: scripts, mountPath: /scripts}
+      volumes:
+        - name: evidence
+          persistentVolumeClaim: {claimName: lineage-evidence}
+        - name: scripts
+          configMap: {name: lineage-collector}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: lineage-collector
+  namespace: flink-lineage-test
+spec:
+  selector: {app: lineage-collector}
+  ports: [{port: 8080, targetPort: 8080}]
+---
+apiVersion: flink.apache.org/v1beta1
+kind: FlinkDeployment
+metadata:
+  name: lineage-session
+  namespace: flink-lineage-test
+spec:
+  image: flink-lineage-local:f55bfca9ca7-754298264-jdk17
+  imagePullPolicy: Never
+  flinkVersion: v2_4
+  serviceAccount: flink
+  flinkConfiguration:
+    taskmanager.numberOfTaskSlots: "2"
+    parallelism.default: "1"
+    execution.job-status-changed-listeners: io.openlineage.flink.listener.OpenLineageJobStatusChangedListenerFactory
+    openlineage.transport.type: http
+    openlineage.transport.url: http://lineage-collector:8080
+    openlineage.flink.disableCheckpointTracking: "true"
+  jobManager:
+    resource: {memory: 1536m, cpu: 0.5}
+  taskManager:
+    resource: {memory: 2048m, cpu: 1}
+  podTemplate:
+    spec:
+      securityContext:
+        runAsUser: 9999
+        runAsGroup: 9999
+        fsGroup: 9999
+      containers:
+        - name: flink-main-container
+          volumeMounts:
+            - {name: evidence, mountPath: /evidence}
+      volumes:
+        - name: evidence
+          persistentVolumeClaim: {claimName: lineage-evidence}

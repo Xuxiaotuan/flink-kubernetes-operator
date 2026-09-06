@@ -1,0 +1,11 @@
+# Licensed under the Apache License, Version 2.0.
+watchNamespaces: [flink-lineage-test]
+image:
+  repository: flink-operator-local
+  tag: "38a9f1974650"
+  digest: ""
+  pullPolicy: Never
+operatorPod:
+  resources:
+    requests: {cpu: 100m, memory: 512Mi}
+    limits: {memory: 1Gi}
