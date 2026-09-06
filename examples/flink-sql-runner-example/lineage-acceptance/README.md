@@ -10,6 +10,43 @@ runtime mode configured **before** TableEnvironment creation. The original examp
 is unchanged. Its line-based SQL splitter is sufficient for these fixed fixtures,
 not arbitrary SQL scripts.
 
+## Verified independent-observation image (2026-09-07, Asia/Shanghai)
+
+Fresh image: `flink-lineage-local:isolated-20260907`, image ID
+`sha256:a32bdb5bf45715385c586fbe9409110071fa46c7ac814dacdfb7fc0ca92de94b`.
+Build provenance recorded clean Flink
+`fe22cf714bb7ab567fe13cf0ad9abb834e34da42` and OpenLineage
+`a85ea412d2eb2afedfaf31c6dca04e9dd2e8a25b` checkouts. The adapter SHA-256 is
+`f54fab26c5a23b85887c84ee64bda0e1b33318bffe0d77ee654774bb5ebd7cd1`;
+the dist Jar SHA-256 is
+`0c253dd99646d3fab7ff14ba9509d49078c4aaa3038645d0b1eba7a450c7e76f`.
+The full inventory includes all 14 distribution-lib Jars, not just the dist Jar.
+
+| Case | Actual Flink JobID | Verified result |
+| --- | --- | --- |
+| Direct | `a4686ac7a56f71ff51bd346a6599e14d` | FINISHED, exact data and lineage |
+| Column metadata missing | `7fd315f839d42b72af6eaf705948a76a` | FINISHED, complete table pairs, unavailable columns |
+| Legacy metadata missing | `ed7e20d3ff32894a4c0b671a6534df45` | FINISHED, partial tables, unavailable columns |
+| Mixed sinks | `a36ea332f87d1c671dbcf7eb800c23c3` | FINISHED, three table pairs, supported sink columns retained |
+| Mixed restore | `214d78a519defea60898d535559148a0` | FINISHED, same data and per-sink lineage |
+| Complex restore | `2272c66ba8c5fc21e5684193a75cbcde` | FINISHED, exact data and lineage |
+| Cancel | `a4b229fc04f1553aa882eec4fb60119a` | CANCELED after tasks RUNNING; one matching ABORT |
+| Runtime CAST failure | `36a47d3d3cd136ef002f684fd0b42c82` | FAILED with NumberFormatException; one matching FAIL |
+| Application | `25e38effaad378c8666622634d147335` | FINISHED, exact data and lineage |
+
+Evidence is retained in the paired OpenLineage checkout at
+`integration/flink/build/isolated-poc-20260907/`, including raw events, CSV, logs,
+REST snapshots, exact manifests, provenance and library hashes. An initial cancel
+fixture failed SQL parsing before submission because `Result` was unquoted; the
+generator now quotes reserved identifiers. That failed attempt remains archived.
+No Collector-outage rerun was performed on this image. Performance, full upstream
+CI, arbitrary SQL and Marquez consumption are not established by this matrix.
+
+To fit the local cluster, completed `observer-session` and `isolated-session`
+Deployments were scaled to zero after evidence capture; PVCs were retained.
+The `isolated-application` and Collector were left available. Old `lineage-*`
+resources were not modified.
+
 ## Historical fixture and observer evidence (2026-09-06)
 
 - Operator: `38a9f197465082a5f5987653b9497d7e5aef384a`, 1.17-SNAPSHOT.

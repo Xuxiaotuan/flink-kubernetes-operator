@@ -64,14 +64,14 @@ for (const mode of ['cancel','fail']) {
       .replace("'table.dml-sync' = 'true'", "'table.dml-sync' = 'false'") + "SET 'execution.attached' = 'false';\n";
     sql += "CREATE DATABASE lineage_acceptance;\nUSE lineage_acceptance;\n"
       + "CREATE TABLE Numbers (`value` BIGINT) WITH ('connector'='datagen', 'rows-per-second'='1');\n"
-      + "CREATE TABLE Result (`value` BIGINT) WITH ('connector'='blackhole');\n"
-      + "INSERT INTO Result SELECT `value` + 1 FROM Numbers;\n";
+      + "CREATE TABLE `Result` (`value` BIGINT) WITH ('connector'='blackhole');\n"
+      + "INSERT INTO `Result` SELECT `value` + 1 FROM Numbers;\n";
   } else {
     fs.writeFileSync(path.join(__dirname,mode,'raw.csv'),'not-a-number\n');
     sql += "SET 'restart-strategy.type' = 'none';\nCREATE DATABASE lineage_acceptance;\nUSE lineage_acceptance;\n"
-      + "CREATE TABLE Raw (`value` STRING) WITH ('connector'='filesystem', 'path'='file:///evidence/fail/raw.csv', 'format'='csv');\n"
-      + "CREATE TABLE Result (`value` BIGINT) WITH ('connector'='filesystem', 'path'='file:///evidence/fail/result', 'format'='csv');\n"
-      + "INSERT INTO Result SELECT CAST(`value` AS BIGINT) FROM Raw;\n";
+      + "CREATE TABLE `Raw` (`value` STRING) WITH ('connector'='filesystem', 'path'='file:///evidence/fail/raw.csv', 'format'='csv');\n"
+      + "CREATE TABLE `Result` (`value` BIGINT) WITH ('connector'='filesystem', 'path'='file:///evidence/fail/result', 'format'='csv');\n"
+      + "INSERT INTO `Result` SELECT CAST(`value` AS BIGINT) FROM `Raw`;\n";
   }
   fs.writeFileSync(path.join(__dirname,mode+'.sql'),sql);
   fs.writeFileSync(path.join(__dirname,mode+'.yaml'),job.replaceAll('lineage-direct','lineage-'+mode).replace('/evidence/direct.sql','/evidence/'+mode+'.sql'));
