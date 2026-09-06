@@ -23,7 +23,7 @@ for (const mode of ['restored', 'incomplete', 'application']) {
   };
   if (mode === 'incomplete') scripts = {
     'compile-gate': sql.split('EXECUTE STATEMENT SET')[0] + "COMPILE PLAN '/evidence/incomplete/plan.json' FOR INSERT INTO Detail SELECT order_id, 'fixed', amount + fee FROM Orders;\n",
-    reject: sql.split('CREATE DATABASE')[0] + "EXECUTE PLAN '/evidence/incomplete/bad-plan.json';\n"
+    incomplete: sql.split('CREATE DATABASE')[0] + "EXECUTE PLAN '/evidence/incomplete/bad-plan.json';\n"
   };
   if (mode === 'application') scripts = {application:sql.split('\n').filter(line => !/SET '(execution.target|rest.address|rest.port)'/.test(line)).join('\n')};
   for (const [name, text] of Object.entries(scripts)) {
