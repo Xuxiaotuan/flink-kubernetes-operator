@@ -10,11 +10,14 @@ runtime mode configured **before** TableEnvironment creation. The original examp
 is unchanged. Its line-based SQL splitter is sufficient for these fixed fixtures,
 not arbitrary SQL scripts.
 
-## Verified versions and results (2026-09-06)
+## Historical fixture and observer evidence (2026-09-06)
 
 - Operator: `38a9f197465082a5f5987653b9497d7e5aef384a`, 1.17-SNAPSHOT.
-- Modified Flink: `f55bfca9ca7`, 2.4-SNAPSHOT.
-- Paired OpenLineage: `754298264`, adapter 1.54.0-SNAPSHOT.
+- Historical fixture image: `flink-lineage-local:f55bfca9ca7-754298264-jdk17`.
+  Its strict missing-lineage rejection behavior predates the observer changes.
+- Observer image: `flink-lineage-local:observer-20260906`, built from modified
+  working trees, Flink 2.4-SNAPSHOT and adapter 1.54.0-SNAPSHOT. The historical
+  revision labels are not an identity for these modified sources or a later commit.
 - OrbStack Kubernetes 1.35.6, linux/arm64, Java 17, 12 GiB VM memory.
 - cert-manager 1.20.3; Operator watches only `flink-lineage-test`.
 
@@ -22,9 +25,20 @@ not arbitrary SQL scripts.
 | --- | --- |
 | Remote Session SQL Client | FINISHED; exact CSV rows and HTTP lineage |
 | Fresh-Pod compiled-plan restore | FINISHED; no original DDL; MultipleInput retained; identical lineage |
-| Incomplete compiled lineage | Explicit rejection; no new remote job, START event or sink files |
+| Incomplete compiled lineage | FINISHED; exact projection rows; PARTIAL/UNAVAILABLE status, no false column or exact table-edge facet |
 | Application FlinkDeployment | FINISHED; identical CSV rows and HTTP lineage |
-| HTTP endpoint unavailable | Transport timeout; job still FINISHED; no corresponding START received |
+| SQL Client HTTP endpoint unavailable | FINISHED; timeout and no START; healthy remote JobManager emitted RUNNING/COMPLETE |
+| Collector unavailable to both processes | FINISHED; exact rows; zero received events; collector restored |
+
+These observer results are backed by the paired OpenLineage checkout's generated
+`integration/flink/build/observer-poc-20260906/evidence/summary.json` and
+`verification.txt`, with raw events, rows, manifests and logs retained beside them.
+Image ID: `sha256:b4948949265a2514a33fba8f8b3bd75b3cd657516b6633eb265ab38a41e1ca73`.
+Dist Jar SHA-256: `1c075f5de17deebbe3ef091e5fc95f1677955c93c921227e529af49ed9beba5c`;
+adapter Jar SHA-256: `5d150fb6bcefeb61cc9e8b48820d733421c17ff998df95e3da8dcca220a1c5f8`.
+Those hashes identify the tested artifacts, not an unrecorded post-build commit.
+The first full-outage attempt was inconclusive due to insufficient memory; the
+repeat passed after suspending/scaling down the completed new application.
 
 Positive cases require two input datasets, two outputs and all six output field
 dependency sets, including DIRECT/INDIRECT dependencies and namespace alignment.
@@ -45,8 +59,11 @@ to your local checkout/artifact locations before running the commands:
 
 - `operator_repo`: this Operator checkout at the pinned commit plus this fixture.
 - `openlineage_repo`: the paired OpenLineage checkout.
+- `flink_repo`: the paired Flink source checkout used to produce the distribution.
 - `flink_dist`: the freshly built modified Flink distribution directory.
 - `adapter_jar`: the freshly built paired OpenLineage Jar.
+- `lineage_image`: a new image tag for this build; update the generated manifests
+  to this tag. The checked-in historical tag is not a current build instruction.
 
 Build both paired projects using the OpenLineage SQL Client acceptance README.
 In particular, use `-Djar.forceCreation=true` or a clean Flink build to avoid stale
@@ -64,24 +81,38 @@ cp "$adapter_jar" "$lineage_work/openlineage-flink.jar"
 mkdir -p "$lineage_work/direct" "$lineage_work/runner-classes"
 cp "$openlineage_repo/integration/flink/flink2/src/test/scripts/sql-client-lineage/orders.csv" "$lineage_work/direct/"
 cp "$openlineage_repo/integration/flink/flink2/src/test/scripts/sql-client-lineage/customers.csv" "$lineage_work/direct/"
-node "$lineage_work/prepare-cases.cjs"
-node --test "$lineage_work/collector.test.cjs"
+node "$lineage_work/prepare-cases.cjs" "$openlineage_repo"
+node --test "$lineage_work/collector.test.cjs" "$lineage_work/build-provenance.test.cjs"
 javac -cp "$flink_dist/lib/*" -d "$lineage_work/runner-classes" "$lineage_work/SqlRunner.java"
 jar --create --file "$lineage_work/sql-runner-batch.jar" --main-class org.apache.flink.examples.SqlRunner -C "$lineage_work/runner-classes" .
-docker build --platform linux/arm64 -t flink-lineage-local:f55bfca9ca7-754298264-jdk17 "$lineage_work"
-docker run --rm flink-lineage-local:f55bfca9ca7-754298264-jdk17 bash -lc '/opt/flink/bin/flink --version'
+node "$lineage_work/build-provenance.cjs" "$flink_repo" "$openlineage_repo" \
+  "$lineage_work/dist/lib/flink-dist-2.4-SNAPSHOT.jar" "$lineage_work/openlineage-flink.jar" \
+  "$lineage_work/build-provenance.json"
+docker build --platform linux/arm64 -t "$lineage_image" \
+  --build-arg FLINK_GIT_SHA="$(node -p 'require(process.argv[1]).flink.gitSha' "$lineage_work/build-provenance.json")" \
+  --build-arg FLINK_GIT_DIRTY="$(node -p 'require(process.argv[1]).flink.dirty' "$lineage_work/build-provenance.json")" \
+  --build-arg OPENLINEAGE_GIT_SHA="$(node -p 'require(process.argv[1]).openlineage.gitSha' "$lineage_work/build-provenance.json")" \
+  --build-arg OPENLINEAGE_GIT_DIRTY="$(node -p 'require(process.argv[1]).openlineage.dirty' "$lineage_work/build-provenance.json")" "$lineage_work"
+docker run --rm "$lineage_image" bash -lc '/opt/flink/bin/flink --version'
 ```
 
 The local-runtime Operator Dockerfile packages the Maven outputs instead of
 rebuilding them inside Docker. Keep it paired with this exact source layout.
-Image tags and revision labels describe the versions above: if sources change,
-update the tags/labels/manifests together; do not overwrite the tags with unrelated
-builds. Record image IDs and Jar hashes alongside the run evidence.
+Capture provenance immediately after the paired builds and before further edits.
+It records each build-time HEAD, whether the working tree is dirty, and hashes of
+the copied Jars. It is also embedded as `/opt/flink/build-provenance.json`.
+Dirty HEAD is a base revision, not a claim that the commit alone reproduces the
+artifact. Keep source diffs with the evidence; a subsequent commit does not rewrite
+build-time identity. Do not overwrite existing tags with unrelated builds.
+Retain SHA-256 hashes of every copied `dist/lib/*.jar` in the final evidence,
+including `flink-table-planner-loader-2.4-SNAPSHOT.jar` (which embeds the Planner
+Bundle) and `flink-table-runtime-2.4-SNAPSHOT.jar`. The dist Jar hash alone does not
+identify the planner code executed by SQL Client.
 
 ## Deploy deliberately
 
 These steps mutate the selected cluster. Check `kubectl config current-context`
-first. Use an empty test namespace and a fresh evidence PVC for a new run; fixed
+first. Use a watched test namespace and fresh resource names/evidence PVC for a new run; fixed
 names/paths are intentional and this is **not** an idempotent rerun against old data.
 Do not blindly apply to a cluster with existing Operator CRDs or workloads.
 
@@ -127,18 +158,21 @@ Operator status and a copy of `/evidence`:
    `/evidence/restored/plan.json`.
 3. In a **copy** of `/evidence/incomplete/plan.json`, recursively remove exactly
    one `columnLineage` property, assert the count, and write `bad-plan.json` in the
-   same directory. Apply `reject.yaml`. Require the explicit missing-lineage error,
-   unchanged remote job/event counts and no sink files. Empty staging directories
-   may exist. SQL Client can return zero after a SQL error, so inspect its log.
+same directory. Apply `incomplete.yaml`. Require remote FINISHED and Detail rows
+   `1,fixed,105`, `2,fixed,205`, `3,fixed,55`. START and COMPLETE must carry explicit
+   unavailable column status and issues. With the current independent serialized
+   `tableLineage`, require COMPLETE table status and the exact Orders-to-Detail
+   pair, with no column facet. This is stronger than the historical observer
+   image's PARTIAL table result. Inspect the SQL log as well as its exit code.
 4. Apply `restore.yaml`: this starts a fresh Pod without original table/view DDL.
    Require remote FINISHED and exact data/lineage equivalence.
 5. Apply `application.yaml`: Operator runs the batch-only SQL runner in the
    application cluster without an external SQL Client. Require remote FINISHED
    and exact data/lineage equivalence.
 6. Apply `transport-failure.yaml`. Its URL uses an unserved port on the receiver
-   Service, without stopping the receiver. Require the transport error, no new
-   HTTP event, and independently record job/data outcome. The recorded run finished
-   successfully despite the delivery failure. Capture the SQL Client file logs
+   Service, without stopping the receiver. Require the transport error and no START
+   for the job. The remote JobManager uses its own endpoint and may emit RUNNING or
+   COMPLETE; record those separately. Require FINISHED and exact rows. Capture the SQL Client file logs
    before the completed container is garbage-collected.
 
 Copy `/evidence` to a fresh local directory. For each positive case run:
@@ -147,6 +181,8 @@ Copy `/evidence` to a fresh local directory. For each positive case run:
 node "$fixture/verify-http.cjs" "$evidence_dir" direct "$direct_job_id" "$openlineage_repo"
 node "$fixture/verify-http.cjs" "$evidence_dir" restored "$restored_job_id" "$openlineage_repo"
 node "$fixture/verify-http.cjs" "$evidence_dir" application "$application_job_id" "$openlineage_repo"
+node "$fixture/verify-http.cjs" "$evidence_dir" incomplete "$incomplete_job_id" "$openlineage_repo"
+node "$fixture/verify-http.cjs" "$evidence_dir" legacy "$legacy_job_id" "$openlineage_repo"
 ```
 
 Use actual remote job IDs, not hard-coded IDs from earlier runs. The verifier keeps
@@ -158,3 +194,29 @@ No cleanup is automated. These commands leave controllers, clusters, test Jobs,
 PVC and images present; review retained evidence and exact targets before removal.
 Raw logs, images, compiled plans and data outputs are build artifacts, not source
 files to commit.
+
+## Mixed sinks and terminal lifecycle regression fixtures
+
+For the separate legacy case, apply `compile-legacy.yaml`, remove exactly one
+`tableLineage` and one `columnLineage` property from a copy of its compiled plan,
+and write `/evidence/legacy/bad-plan.json`. Apply `legacy.yaml`; require the same
+three projection rows, PARTIAL table status, UNAVAILABLE columns and no precise
+table-pair/column facet. Keep this distinct from the column-only removal case.
+
+Passing `openlineage_repo` to `prepare-cases.cjs` also generates `mixed.yaml`,
+`compile-mixed.yaml` and `mixed-restored.yaml`. The projection writes `2,3,4`
+to Good; INTERSECT writes `2,3` to Unsupported. Both must finish. Require complete
+table lineage, PARTIAL column status, and a column facet only on Good. Compare
+direct and restored data, column fields and nested `columnStatuses` with
+`verify-http.cjs` modes `mixed` and `mixed-restored`.
+
+`cancel.yaml` submits a detached, unbounded datagen job at one row per second.
+After verifying the newly submitted job ID is RUNNING, cancel only that job using
+the Flink REST endpoint `PATCH /jobs/<jobId>?mode=cancel`; require remote CANCELED
+and one ABORT event with the same lineage availability as START.
+`fail.yaml` reads the string `not-a-number` from CSV and casts it to BIGINT at
+runtime with restarts disabled. Require remote FAILED and one FAIL event with
+unchanged lineage availability. Use verifier modes `cancel` and `fail` after
+recording the actual remote states. SQL Client exit status alone is insufficient.
+These new scenarios require fresh paired artifacts; their generated SQL and
+verifier unit tests do not themselves establish Kubernetes execution success.
