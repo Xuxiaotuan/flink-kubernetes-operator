@@ -247,6 +247,20 @@ table lineage, PARTIAL column status, and a column facet only on Good. Compare
 direct and restored data, column fields and nested `columnStatuses` with
 `verify-http.cjs` modes `mixed` and `mixed-restored`.
 
+`compile-partial-table.yaml` compiles two independently supported writers:
+`Numbers.value + 1 -> Good` and `OtherNumbers.value + 1 -> Unsupported`.
+In a copy of `/evidence/partial-table/plan.json`, select the single
+`dynamicTableSink` whose `tableLineage.sinkKey` is
+`` `default_catalog`.`lineage_acceptance`.`Unsupported` ``. Require both metadata
+blocks to exist, remove only that sink's `columnLineage` and `tableLineage`, and
+write `/evidence/partial-table/bad-plan.json`. Apply `partial-table.yaml`.
+Require Good rows `2,3,4`, Unsupported rows `3,4,5`, and remote FINISHED.
+Both overall statuses must be PARTIAL; both native per-output status maps must
+mark Good COMPLETE and Unsupported UNAVAILABLE at START and COMPLETE. The exact
+table facet must contain only `Numbers -> Good`, with no Unsupported entry (not
+even an empty-input entry). Good retains its column facet. Verify with mode
+`partial-table`; retain the original compiled plan as comparison evidence.
+
 `cancel.yaml` submits a detached, unbounded datagen job at one row per second.
 After verifying the newly submitted job ID is RUNNING, cancel only that job using
 the Flink REST endpoint `PATCH /jobs/<jobId>?mode=cancel`; require remote CANCELED
@@ -257,3 +271,35 @@ unchanged lineage availability. Use verifier modes `cancel` and `fail` after
 recording the actual remote states. SQL Client exit status alone is insufficient.
 These new scenarios require fresh paired artifacts; their generated SQL and
 verifier unit tests do not themselves establish Kubernetes execution success.
+
+## Fresh repair acceptance (2026-09-07, Asia/Shanghai)
+
+The isolated `repaired-*` deployment exercised clean Flink
+`392397175622eb797a92164b78e4c825d2ed139e`, OpenLineage
+`6751f8e0679df6e21370f9e8807be1a9a6d7e950`, and these fixture changes at
+Operator `b65281d7ea1cb5474bcf847e60b1fb4f596f652d`.
+Image `flink-lineage-local:repaired-20260907` has ID
+`sha256:2f35de180d750a2ec8d3741dd761b5ca11801e4ef954b0f91b30f5cfcd6da9bd`.
+
+All ten cases passed exact CSV, applicable table/column relationships and HTTP
+lifecycle/status checks: direct, incomplete, legacy, mixed, mixed-restored,
+partial-table, restored, cancel, fail and application. The partial-table job
+`5360cebcd8b6e58c9c855e3603ba756c` preserved only the independently proven
+Numbers-to-Good entry, with native per-output status equality at START/COMPLETE.
+
+A separate full Collector outage was also verified: zero available receiver
+endpoints before submission, remote job `f28066fe160282a34870f831a4164ea6`
+FINISHED, exact rows, zero received events, and total event count unchanged
+(29 before and after). The Collector was restored to 1/1 in the cleanup path.
+Do not confuse this with the unserved-client-port fixture above: that fixture
+does not disable the JobManager's receiver.
+
+Evidence is local at the paired OpenLineage repository's
+`integration/flink/build/repaired-poc-20260907/`, including all 14 Flink lib
+hashes, adapter hash, image/build provenance, manifests, JobIDs, remote states,
+raw SQL/CSV/events/logs, and outage assertions. No build artifacts are committed.
+The prior completed `isolated-application` and new completed `repaired-session`
+were scaled to zero after archiving; their CRs and PVCs remain. The completed
+Application cluster and healthy Collector remain available. No old `lineage-*`
+resources were changed. This is bounded POC acceptance, not HA, savepoint,
+arbitrary connector, or reliable-delivery verification.
