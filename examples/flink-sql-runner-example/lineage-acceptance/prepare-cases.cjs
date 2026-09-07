@@ -39,14 +39,20 @@ for (const mode of ['restored', 'incomplete', 'legacy', 'application']) {
 if (openlineageRepo) {
   const template = fs.readFileSync(path.join(openlineageRepo,
     'integration/flink/flink2/src/test/scripts/sql-client-lineage/mixed.sql'), 'utf8');
-  for (const mode of ['mixed', 'mixed-restored']) {
+  for (const mode of ['mixed', 'mixed-restored', 'partial-table']) {
     const dir = path.join(__dirname, mode);
     fs.mkdirSync(dir, {recursive:true});
     fs.writeFileSync(path.join(dir,'numbers.csv'), '1\n2\n3\n');
     fs.writeFileSync(path.join(dir,'other-numbers.csv'), '2\n3\n4\n');
-    const sql = base.split('CREATE DATABASE')[0]
+    let sql = base.split('CREATE DATABASE')[0]
       + template.slice(template.indexOf('CREATE DATABASE')).replaceAll('__ROOT__', '/evidence/'+mode);
-    const scripts = mode === 'mixed' ? {mixed: sql} : {
+    if (mode === 'partial-table') sql = sql.replace(
+      'INSERT INTO Unsupported SELECT `value` FROM Numbers INTERSECT SELECT `value` FROM OtherNumbers;',
+      'INSERT INTO Unsupported SELECT `value` + 1 FROM OtherNumbers;');
+    const scripts = mode === 'partial-table' ? {
+      'compile-partial-table': sql.replace('EXECUTE STATEMENT SET', "COMPILE PLAN '/evidence/partial-table/plan.json' FOR STATEMENT SET"),
+      'partial-table': sql.split('CREATE DATABASE')[0] + "EXECUTE PLAN '/evidence/partial-table/bad-plan.json';\n"
+    } : mode === 'mixed' ? {mixed: sql} : {
       'compile-mixed': sql.replace('EXECUTE STATEMENT SET', "COMPILE PLAN '/evidence/mixed-restored/plan.json' FOR STATEMENT SET"),
       'mixed-restored': sql.split('CREATE DATABASE')[0] + "EXECUTE PLAN '/evidence/mixed-restored/plan.json';\n"
     };

@@ -6,7 +6,7 @@ const assert = require('node:assert/strict');
 const [root, mode, jobId, openLineageRepo] = process.argv.slice(2);
 assert.ok(root && mode && jobId && openLineageRepo,
   'Usage: node verify-http.cjs <evidence directory> <case> <Flink job ID> <OpenLineage repository>');
-assert.ok(['direct', 'restored', 'application', 'incomplete', 'legacy', 'mixed', 'mixed-restored', 'cancel', 'fail'].includes(mode), 'Unknown case');
+assert.ok(['direct', 'restored', 'application', 'incomplete', 'legacy', 'mixed', 'mixed-restored', 'partial-table', 'cancel', 'fail'].includes(mode), 'Unknown case');
 const verify = require(path.resolve(openLineageRepo, 'integration/flink/flink2/src/test/scripts/sql-client-lineage/verify.cjs'));
 const all = fs.readFileSync(path.join(root, 'events.jsonl'), 'utf8').trim().split('\n').map(JSON.parse);
 const events = all.filter(e => e.run.facets.flink_job.jobId === jobId);
@@ -22,11 +22,11 @@ if (mode === 'incomplete' || mode === 'legacy') {
   console.log('PASS: ' + mode + ' lineage with successful remote job ' + jobId);
   process.exit(0);
 }
-if (mode === 'mixed' || mode === 'mixed-restored') {
-  const fields = verify.mixed(path.join(root, mode));
+if (mode === 'mixed' || mode === 'mixed-restored' || mode === 'partial-table') {
+  const fields = verify.mixed(path.join(root, mode), mode === 'partial-table');
   const baseline = path.join(root, 'mixed-fields.json');
   if (mode === 'mixed') fs.writeFileSync(baseline, JSON.stringify(fields));
-  else assert.deepEqual(fields, JSON.parse(fs.readFileSync(baseline)), 'Mixed per-sink lineage matches direct submission');
+  else if (mode === 'mixed-restored') assert.deepEqual(fields, JSON.parse(fs.readFileSync(baseline)), 'Mixed per-sink lineage matches direct submission');
   console.log('PASS: ' + mode + ' data and per-sink lineage for remote job ' + jobId);
   process.exit(0);
 }
