@@ -23,7 +23,11 @@ WITH ('connector'='filesystem', 'path'='file:///evidence/direct/summary', 'forma
 CREATE TEMPORARY VIEW Enriched AS
 SELECT o.order_id, c.tier, o.amount + o.fee AS net_amount
 FROM Orders o JOIN Customers c ON o.customer_id = c.customer_id
-WHERE c.tier <> 'blocked';
+WHERE c.tier <> 'blocked'
+AND o.customer_id IN (SELECT d.customer_id FROM Customers d WHERE d.tier <> 'blocked')
+AND o.customer_id NOT IN (SELECT d.customer_id FROM Customers d WHERE d.tier = 'blocked')
+AND EXISTS (SELECT 1 FROM Customers d WHERE d.customer_id = o.customer_id AND d.tier <> 'blocked')
+AND NOT EXISTS (SELECT 1 FROM Customers d WHERE d.customer_id = o.customer_id AND d.tier = 'blocked');
 EXECUTE STATEMENT SET
 BEGIN
 INSERT INTO Detail SELECT order_id, tier, net_amount FROM Enriched;

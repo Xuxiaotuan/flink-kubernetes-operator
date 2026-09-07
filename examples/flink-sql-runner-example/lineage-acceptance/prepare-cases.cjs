@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 const fs = require('node:fs');
 const path = require('node:path');
+const assert = require('node:assert/strict');
 const base = fs.readFileSync(path.join(__dirname, 'direct.sql'), 'utf8');
 const job = fs.readFileSync(path.join(__dirname, 'submit.yaml'), 'utf8');
 const openlineageRepo = process.argv[2];
@@ -46,9 +47,11 @@ if (openlineageRepo) {
     fs.writeFileSync(path.join(dir,'other-numbers.csv'), '2\n3\n4\n');
     let sql = base.split('CREATE DATABASE')[0]
       + template.slice(template.indexOf('CREATE DATABASE')).replaceAll('__ROOT__', '/evidence/'+mode);
-    if (mode === 'partial-table') sql = sql.replace(
-      'INSERT INTO Unsupported SELECT `value` FROM Numbers INTERSECT SELECT `value` FROM OtherNumbers;',
-      'INSERT INTO Unsupported SELECT `value` + 1 FROM OtherNumbers;');
+    if (mode === 'partial-table') {
+      const writer = /^INSERT INTO Unsupported [^\n]+;$/gm;
+      assert.equal((sql.match(writer) || []).length, 1, 'Expected exactly one Unsupported writer');
+      sql = sql.replace(writer, 'INSERT INTO Unsupported SELECT `value` + 1 FROM OtherNumbers;');
+    }
     const scripts = mode === 'partial-table' ? {
       'compile-partial-table': sql.replace('EXECUTE STATEMENT SET', "COMPILE PLAN '/evidence/partial-table/plan.json' FOR STATEMENT SET"),
       'partial-table': sql.split('CREATE DATABASE')[0] + "EXECUTE PLAN '/evidence/partial-table/bad-plan.json';\n"

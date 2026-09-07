@@ -10,6 +10,49 @@ runtime mode configured **before** TableEnvironment creation. The original examp
 is unchanged. Its line-based SQL splitter is sufficient for these fixed fixtures,
 not arbitrary SQL scripts.
 
+## Verified membership-subquery image (2026-09-07, Asia/Shanghai)
+
+Fresh image: `flink-lineage-local:subquery-20260907`, image ID
+`sha256:31cf9764e048d2afd5092bf97f31786f422f95b4296df250c2ab1b2e93263127`.
+Build-time provenance records Flink `f56bb1c0120` and OpenLineage `cc271f800c13`,
+both dirty, with the actual source diffs and all distribution-lib hashes retained.
+The Planner changes were subsequently committed as Flink `3f3590df8c1`;
+the base commit alone does not reproduce the tested image. The adapter SHA-256 is
+`0d29f0c8685a3134ad2e99f6b173012ff807b630bb3d8831c62827353d8b486b`;
+the dist Jar SHA-256 is
+`08208f8289c9bc8cecdf65a5535fb21ed0fb2c6c22447504c76f52e133cbfb80`.
+
+| Case | Actual Flink JobID | Verified result |
+| --- | --- | --- |
+| Direct | `847befb6b9c44e6f3ce2e2c71cc348fb` | FINISHED, exact data and HTTP lineage |
+| Column metadata missing | `76b34f3a551bccbb965a22a1fc282ab4` | FINISHED, honest unavailable columns |
+| Legacy metadata missing | `736078e568cc7e9d717c1fb667871e36` | FINISHED, honest partial tables and unavailable columns |
+| Mixed sinks | `f9d9cb59cdbf9f237b83635000278e10` | FINISHED, valid output lineage retained |
+| Mixed restore | `4e254364ee1b009c1dc43c0d88ba4046` | FINISHED, exact data and per-sink lineage |
+| Partial-table restore | `85a58581554be92c4f3db3473069e2a6` | FINISHED, independent table/column status |
+| Complex restore | `28b9e374bb93e5217e56a56a71bf9e63` | FINISHED, exact data and HTTP lineage |
+| Cancel | `0b2daf5e0c0a7449e43bc5fae812c994` | Tasks RUNNING, then CANCELED and matching ABORT |
+| Runtime CAST failure | `f194b7adc2f3137c71e3dc558b8207c2` | FAILED and matching FAIL |
+| Application | `2c025c074f21b4315a0b26953ef446e3` | FINISHED, exact data and HTTP lineage |
+
+The current positive query includes IN, NOT IN, EXISTS and NOT EXISTS. The
+mixed negative uses a scalar MIN subquery, preserving unavailable-column
+isolation after EXISTS became supported. The fixture generator requires exactly
+one Unsupported writer; its success, missing-writer and duplicate-writer tests
+passed together with collector/provenance checks (five tests total).
+
+Raw events, result rows, REST snapshots, manifests, source diffs and logs are
+retained in the paired OpenLineage checkout at
+`integration/flink/build/subquery-poc-20260907/`. The initial direct harness hit
+its 60-second wait limit; the same already submitted job then passed under bounded
+status polling without resubmission. That failed wait log remains retained.
+The new Session and Application use 1024m JobManager/TaskManager process memory,
+with SQL Client requests of 768Mi. The completed `subquery-session` Deployment
+was scaled to zero before Application to fit the local cluster. The new PVC,
+collector and completed Application are retained; existing resources were not
+changed. This is not a performance, arbitrary-SQL, HA, full-CI or delivery claim.
+No collector-outage rerun was performed on this image.
+
 ## Verified independent-observation image (2026-09-07, Asia/Shanghai)
 
 Fresh image: `flink-lineage-local:isolated-20260907`, image ID
@@ -79,6 +122,10 @@ repeat passed after suspending/scaling down the completed new application.
 
 Positive cases require two input datasets, two outputs and all six output field
 dependency sets, including DIRECT/INDIRECT dependencies and namespace alignment.
+The current positive SQL also exercises IN, NOT IN, correlated EXISTS and
+correlated NOT EXISTS. These predicates preserve the same expected rows and
+dependency sets for the fixed sample; the paired JDBC fixture separately tests
+NULL-sensitive NOT IN versus NOT EXISTS behavior.
 The HTTP event's `flink_job.jobId` must match the actual remote job ID.
 Expected Detail rows: `1,gold,105` and `3,gold,55`; Summary: `gold,160,2`.
 
@@ -119,7 +166,7 @@ mkdir -p "$lineage_work/direct" "$lineage_work/runner-classes"
 cp "$openlineage_repo/integration/flink/flink2/src/test/scripts/sql-client-lineage/orders.csv" "$lineage_work/direct/"
 cp "$openlineage_repo/integration/flink/flink2/src/test/scripts/sql-client-lineage/customers.csv" "$lineage_work/direct/"
 node "$lineage_work/prepare-cases.cjs" "$openlineage_repo"
-node --test "$lineage_work/collector.test.cjs" "$lineage_work/build-provenance.test.cjs"
+OPENLINEAGE_REPO="$openlineage_repo" node --test "$lineage_work/collector.test.cjs" "$lineage_work/build-provenance.test.cjs" "$lineage_work/prepare-cases.test.cjs"
 javac -cp "$flink_dist/lib/*" -d "$lineage_work/runner-classes" "$lineage_work/SqlRunner.java"
 jar --create --file "$lineage_work/sql-runner-batch.jar" --main-class org.apache.flink.examples.SqlRunner -C "$lineage_work/runner-classes" .
 node "$lineage_work/build-provenance.cjs" "$flink_repo" "$openlineage_repo" \
@@ -242,13 +289,16 @@ table-pair/column facet. Keep this distinct from the column-only removal case.
 
 Passing `openlineage_repo` to `prepare-cases.cjs` also generates `mixed.yaml`,
 `compile-mixed.yaml` and `mixed-restored.yaml`. The projection writes `2,3,4`
-to Good; INTERSECT writes `2,3` to Unsupported. Both must finish. Require complete
+to Good; a scalar MIN subquery filter writes `2,3` to Unsupported. Both must finish. Require complete
 table lineage, PARTIAL column status, and a column facet only on Good. Compare
 direct and restored data, column fields and nested `columnStatuses` with
 `verify-http.cjs` modes `mixed` and `mixed-restored`.
 
 `compile-partial-table.yaml` compiles two independently supported writers:
 `Numbers.value + 1 -> Good` and `OtherNumbers.value + 1 -> Unsupported`.
+The generator locates the Unsupported sink writer rather than matching an old
+SQL expression. Missing or duplicate writers fail fixture generation explicitly;
+the paired-fixture tests cover both rejection cases and the resulting two inserts.
 In a copy of `/evidence/partial-table/plan.json`, select the single
 `dynamicTableSink` whose `tableLineage.sinkKey` is
 `` `default_catalog`.`lineage_acceptance`.`Unsupported` ``. Require both metadata
